@@ -13,8 +13,14 @@ import java.util.Optional
  *
  * In addition to interacting with containers a container controller can classify kinds of configuration changes.
  *
+ * When containers are created they may contain some default configuration data that needs to be remembered.
+ * When applying external configuration that data is changed. For example a container may contain some logging
+ * configuration that is augmented by external configuration. When logging is reconfigured dynamically the default
+ * configuration must still be available. For that means the [configureAndStartContainer] method returns a memento
+ * that is passed into the [configureDynamic] method later on.
+ *
  * @param C the type of configuration
- * @param M the type of a memento that is used when a running container is reconfigured dynamically
+ * @param M the type of a memento that is used to remember parts of the default configuration
  */
 interface ContainerController<C, M> {
 
@@ -22,7 +28,7 @@ interface ContainerController<C, M> {
 
     fun configureAndStartContainer(cfg: C, id: ContainerId): M
 
-    fun configureDynamic(cfg: C, id: ContainerId, cfgMemento: M)
+    fun configureDynamic(cfg: C, id: ContainerId, memento: M)
 
     fun removeContainer(id: ContainerId)
 
@@ -171,6 +177,10 @@ class MinionController<C, M>(
 
         override suspend fun doOnCreated(id: ContainerId) = Starting(cfg, id)
 
+        // give up when container creation failed
+        // -> another option would be to introduce another state that determines if a container for the configuration
+        //    already exists (with the corresponding container name) and in that case removes that container
+        //    before trying container creation again
         override suspend fun doOnCreationFailed() = Idle()
     }
 
@@ -206,10 +216,12 @@ class MinionController<C, M>(
 
         override suspend fun doOnDestroy() = Removing(Optional.empty(), id)
 
-        override suspend fun doOnConfig(cfg: C) = if (this.cfg != cfg) {
-            Removing(Optional.of(cfg), id)
-        } else {
-            this
+        override suspend fun doOnConfig(cfg: C) = run {
+            if (ctrl.compare(this.cfg, cfg).changed) {
+                Removing(Optional.of(cfg), id)
+            } else {
+                this
+            }
         }
 
         override suspend fun doOnStarted(id: ContainerId, memento: M) = if (id == this.id) {

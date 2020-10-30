@@ -45,12 +45,14 @@ abstract class ChannelBasedActor<M>(
 }
 
 /**
- * Represents the current state of an actor.
+ * Represents the current state of a [StateMachineActor].
  *
  * The current state is responsible for processing incoming events.
- * Subclasses have to implement event handler functions that return the next state.
+ * All functions must be non-blocking. They can fork coroutines (most probably on the IO dispatcher) and send other
+ * events.
  *
- * All functions must be non-blocking. They can fork coroutines (possibly on the IO dispatcher) and send other events.
+ * State changes are detected by comparing the [stateId]s of the state before a state transition and the state after
+ * the state transition. In case a state change is detected the [enter] method of the new state is invoked.
  */
 interface ActorState<Id> {
     val stateId: Id
@@ -72,6 +74,7 @@ abstract class StateMachineActor<S : ActorState<*>>(
         scope.launch { state.enter() }
     }
 
+    /** Processes a state transition function. The output state may be the same as the input state. */
     override suspend fun receive(msg: suspend S.() -> S) {
         val before = state
         val after = msg(state)
